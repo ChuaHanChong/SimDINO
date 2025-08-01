@@ -10,7 +10,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 import torch
 from torch.utils.data import Sampler
 
-from .datasets import ImageNet, ImageNet21k
+from .datasets import ImageNet, ImageNet21k, ImageShipID_Extra
 from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
 
 
@@ -60,8 +60,10 @@ def _parse_dataset_str(dataset_str: str):
         class_ = ImageNet21k
         if "split" in kwargs:
             kwargs["split"] = ImageNet21k.Split[kwargs["split"]]
-    elif name == "ImageNet22k":
-        class_ = ImageNet22k
+    elif name == "ImageShipID_Extra":
+        class_ = ImageShipID_Extra
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_Extra.Split[kwargs["split"]]
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 
