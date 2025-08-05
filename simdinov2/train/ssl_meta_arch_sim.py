@@ -147,7 +147,7 @@ class SimSSLMetaArch(nn.Module):
         else:
             loss.backward()
 
-    def forward_backward(self, images, teacher_temp, activate_ibot=True):
+    def forward_backward(self, images, teacher_temp, activate_ibot=True, scale=1.0):
         n_global_crops = self.n_global_crops
         global_crops = images["collated_global_crops"].cuda(non_blocking=True)
         local_crops = images["collated_local_crops"].cuda(non_blocking=True)
@@ -325,6 +325,9 @@ class SimSSLMetaArch(nn.Module):
             loss_accumulator += self.ibot_loss_weight * ibot_patch_loss
 
         loss_dict["total_loss"] = loss_accumulator.detach()
+
+        # Apply scaling factor for gradient accumulation
+        loss_accumulator = loss_accumulator * scale
         self.backprop_loss(loss_accumulator)
 
         self.fsdp_synchronize_streams()

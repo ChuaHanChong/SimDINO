@@ -9,6 +9,7 @@ import logging
 import math
 import os
 from functools import partial
+from collections import defaultdict
 # import swanlab
 import timm.optim
 import torch
@@ -228,7 +229,7 @@ def do_train(cfg, model, resume=False):
         checkpointer,
         period=3 * OFFICIAL_EPOCH_LENGTH,
         max_iter=max_iter,
-        max_to_keep=3,
+        max_to_keep=5,
     )
 
     # setup data preprocessing
@@ -239,6 +240,8 @@ def do_train(cfg, model, resume=False):
         input_size=(img_size // patch_size, img_size // patch_size),
         max_num_patches=0.5 * img_size // patch_size * img_size // patch_size,
     )
+
+    accum_steps = cfg.train.grad_accum_steps
     collate_fn = partial(
         collate_data_and_cast,
         mask_ratio_tuple=cfg.ibot.mask_ratio_min_max,
@@ -247,6 +250,7 @@ def do_train(cfg, model, resume=False):
         mask_generator=mask_generator,
         dtype=inputs_dtype,
         drop_masks=cfg.student.drop_masks,
+        grad_accum_steps=accum_steps,
     )
 
     # setup data loader
@@ -279,7 +283,7 @@ def do_train(cfg, model, resume=False):
         max_iter,
         start_iter,
     ):
-        current_batch_size = data["collated_global_crops"].shape[0] / 2
+        current_batch_size = accum_steps * data[0]["collated_global_crops"].shape[0] / 2
         if iteration > max_iter:
             return
 
@@ -326,7 +330,12 @@ def do_train(cfg, model, resume=False):
                         param.requires_grad = True
                     logger.info(f"Unfreeze backbone at iter {iteration}")
                     freeze_backbone = False
-        loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)#, activate_ibot=activate_ibot)
+        loss_dict = defaultdict(float)
+        for data_shard in data:
+            shard_loss_dict = model.forward_backward(data_shard, teacher_temp=teacher_temp, scale=1.0 / accum_steps)#, activate_ibot=activate_ibot)
+            for k, v in shard_loss_dict.items():
+                loss_dict[k] += v.detach()  # .detach(): keep the graph small / avoid dangling references
+        loss_dict = {k: v / accum_steps for k, v in loss_dict.items()}
 
         # clip gradients
         total_grad_norm = None

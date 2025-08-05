@@ -28,6 +28,10 @@ def apply_scaling_rules_to_cfg(cfg):  # to fix
         logger.info(f"sqrt scaling learning rate; base: {base_lr}, new: {cfg.optim.lr}")
     else:
         raise NotImplementedError
+    cfg.train.grad_accum_steps = max(1, getattr(cfg.train, "grad_accum_steps", 1))
+    assert cfg.train.batch_size_per_gpu % cfg.train.grad_accum_steps == 0, (
+        f"Batch size {cfg.train.batch_size_per_gpu} must be divisible by grad_accum_steps {cfg.train.grad_accum_steps}"
+    )
     return cfg
 
 
