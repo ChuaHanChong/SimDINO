@@ -4,6 +4,7 @@
 # found in the LICENSE file in the root directory of this source tree.
 
 import argparse
+from collections import defaultdict
 from functools import partial
 import json
 import logging
@@ -154,8 +155,7 @@ def get_args_parser(
         epoch_length=1250,
         save_checkpoint_frequency=20,
         eval_period_iterations=1250,
-        #learning_rates=[1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 0.1],
-        learning_rates=[2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2],
+        learning_rates=[1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 0.1, 0.2, 0.5, 1.0],
         val_metric_type=MetricType.MEAN_ACCURACY,
         test_metric_types=None,
         classifier_fpath=None,
@@ -195,8 +195,10 @@ def create_linear_input(x_tokens_list, use_n_blocks, use_avgpool):
         output = output.reshape(output.shape[0], -1)
     return output.float()
 
+
 def rmsnorm(x):
     return F.rms_norm(x, (x.size(-1),))
+
 
 class Rotary(nn.Module):
 
@@ -217,6 +219,7 @@ class Rotary(nn.Module):
             self.sin_cached = freqs.sin().bfloat16()
         return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
 
+
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4 # multihead attention
     d = x.shape[3]//2
@@ -225,6 +228,7 @@ def apply_rotary_emb(x, cos, sin):
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3).type_as(x)
+
 
 class AttentiveBlock(nn.Module):
 
@@ -280,6 +284,7 @@ class LinearClassifier(nn.Module):
         output = create_linear_input(x_tokens_list, self.use_n_blocks, self.use_avgpool)
         return self.linear(output)
 
+
 class AttentiveClassifier(LinearClassifier):
     def __init__(self, out_dim, use_n_blocks, use_avgpool, concat_cls=False, num_classes=1000, num_heads=8):
         super().__init__(out_dim, use_n_blocks, use_avgpool, num_classes)
@@ -333,7 +338,10 @@ class LinearPostprocessor(nn.Module):
     def __init__(self, linear_classifier, class_mapping=None):
         super().__init__()
         self.linear_classifier = linear_classifier
-        self.register_buffer("class_mapping", None if class_mapping is None else torch.LongTensor(class_mapping))
+        self.register_buffer(
+            "class_mapping",
+            None if class_mapping is None else torch.LongTensor(class_mapping)
+        )
 
     def forward(self, samples, targets):
         preds = self.linear_classifier(samples)
@@ -351,7 +359,7 @@ def setup_linear_classifiers(sample_output, n_last_blocks_list, learning_rates, 
     linear_classifiers_dict = nn.ModuleDict()
     optim_param_groups = []
     for n in n_last_blocks_list:
-        for avgpool in [True]: #[False, True]:
+        for avgpool in [False, True]:
             for _lr in learning_rates:
                 lr = scale_lr(_lr, batch_size)
                 if attentive:
@@ -419,6 +427,9 @@ def evaluate_linear_classifiers(
     max_accuracy=100*max_accuracy
     results_dict["best_classifier"] = {"name": best_classifier, "accuracy": max_accuracy}
     results_dict["iter"] = iteration
+
+
+    
     logger.info(f"best classifier: {results_dict['best_classifier']}")
 
     if dist.is_main_process():
@@ -427,7 +438,31 @@ def evaluate_linear_classifiers(
                 f.write(json.dumps({k: v}) + "\n")
         with open(metrics_file_path+".last", "w") as f:
                 f.write(str(max_accuracy))
+
     return results_dict
+
+
+def get_cls_num_list(labels):
+    counter = defaultdict(int)
+    for label in labels:
+        counter[label] += 1
+    labels = list(counter.keys())
+    labels.sort()
+    cls_num_list = [counter[label] for label in labels]
+    return cls_num_list
+
+
+class LogitAdjustedLoss(nn.Module):
+    def __init__(self, cls_num_list, tau=1.0):
+        super().__init__()
+        cls_num_ratio = cls_num_list / torch.sum(cls_num_list)
+        log_cls_num = torch.log(cls_num_ratio)
+        self.log_cls_num = log_cls_num
+        self.tau = tau
+
+    def forward(self, logit, target):
+        logit_adjusted = logit + self.tau * self.log_cls_num.unsqueeze(0)
+        return F.cross_entropy(logit_adjusted, target)
 
 
 def eval_linear(
@@ -449,6 +484,7 @@ def eval_linear(
     resume=True,
     classifier_fpath=None,
     val_class_mapping=None,
+    **kwargs,
 ):
     checkpointer = Checkpointer(linear_classifiers, output_dir, optimizer=optimizer, scheduler=scheduler)
     start_iter = checkpointer.resume_or_load(classifier_fpath or "", resume=resume).get("iteration", -1) + 1
@@ -458,6 +494,13 @@ def eval_linear(
     logger.info("Starting training from iteration {}".format(start_iter))
     metric_logger = MetricLogger(delimiter="  ")
     header = "Training"
+
+    if kwargs.get('logit_adjusted_loss', False):
+        cls_num_list = get_cls_num_list(train_data_loader.dataset.get_targets())
+        cls_num_list = torch.Tensor(cls_num_list).to("cuda")
+        train_loss_fn = LogitAdjustedLoss(cls_num_list)   
+    else:
+        train_loss_fn = nn.CrossEntropyLoss() 
 
     for data, labels in metric_logger.log_every(
         train_data_loader,
@@ -472,7 +515,7 @@ def eval_linear(
         features = feature_model(data)
         outputs = linear_classifiers(features)
 
-        losses = {f"loss_{k}": nn.CrossEntropyLoss()(v, labels) for k, v in outputs.items()}
+        losses = {f"loss_{k}": train_loss_fn(v, labels) for k, v in outputs.items()}
         loss = sum(losses.values())
 
         # compute the gradients
@@ -602,7 +645,8 @@ def run_eval_linear(
     val_metric_type=MetricType.MEAN_ACCURACY,
     test_metric_types=None,
     attentive=False,
-    attentive_concat_cls=False
+    attentive_concat_cls=False,
+    **kwargs,
 ):
     seed = 0
 
@@ -620,13 +664,18 @@ def run_eval_linear(
         transform=train_transform,
     )
     training_num_classes = len(torch.unique(torch.Tensor(train_dataset.get_targets().astype(int))))
-    sampler_type = SamplerType.SHARDED_INFINITE
-    # sampler_type = SamplerType.INFINITE
+    if kwargs.get('balanced_sampler', False):
+        sampler_type = SamplerType.SHARDED_INFINITE_BALANCED
+        balanced_sampler_mode = kwargs['balanced_sampler_mode']
+    else:
+        balanced_sampler_mode = None
+        sampler_type = SamplerType.SHARDED_INFINITE
+        # sampler_type = SamplerType.INFINITE
     if epoch_length <= 0:
         epoch_length = len(train_dataset) // (batch_size * dist.get_global_size())
         print(f"OFFICIAL_EPOCH_LENGTH is not defined, set as {epoch_length} by dataset size and batch size")
     
-    n_last_blocks_list = [1,2] #if attentive else [1,2,4]
+    n_last_blocks_list = [1, 2] #if attentive else [1,2,4]
     n_last_blocks = max(n_last_blocks_list)
     autocast_ctx = partial(torch.cuda.amp.autocast, enabled=True, dtype=autocast_dtype)
     feature_model = ModelWithIntermediateLayers(model, n_last_blocks, autocast_ctx)
@@ -662,6 +711,7 @@ def run_eval_linear(
         sampler_advance=start_iter,
         drop_last=True,
         persistent_workers=True,
+        balanced_sampler_mode=balanced_sampler_mode,
     )
     val_data_loader = make_eval_data_loader(val_dataset_str, batch_size, num_workers, val_metric_type)
 
@@ -701,6 +751,7 @@ def run_eval_linear(
         resume=resume,
         val_class_mapping=val_class_mapping,
         classifier_fpath=classifier_fpath,
+        **kwargs,
     )
     results_dict = {}
     if len(test_dataset_strs) > 1 or test_dataset_strs[0] != val_dataset_str:
@@ -749,7 +800,9 @@ def main(args):
         val_class_mapping_fpath=args.val_class_mapping_fpath,
         test_class_mapping_fpaths=args.test_class_mapping_fpaths,
         attentive=args.attentive,
-        attentive_concat_cls=args.attentive_concat_cls
+        attentive_concat_cls=args.attentive_concat_cls,
+        balanced_sampler=args.balanced_sampler,
+        balanced_sampler_mode=args.balanced_sampler_mode,
     )
     return 0
 
@@ -757,5 +810,21 @@ def main(args):
 if __name__ == "__main__":
     description = "DINOv2 linear evaluation"
     args_parser = get_args_parser(description=description)
+    args_parser.add_argument(
+        "--balanced-sampler",
+        action="store_true",
+        help="Use a balanced sampler for training data",
+    )
+    args_parser.add_argument(
+        "--balanced-sampler-mode",
+        type=lambda x: int(x) if x.isdigit() else x,
+        default="downsampling",
+        help="Balanced sampler mode. Can be 'downsampling', 'upsampling' or an integer value",
+    )
+    args_parser.add_argument(
+        "--logit-adjusted-loss",
+        action="store_true",
+        help="Use logit adjusted loss",
+    )
     args = args_parser.parse_args()
     sys.exit(main(args))
