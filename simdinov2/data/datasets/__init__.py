@@ -6,3 +6,4 @@
 from .image_net import ImageNet
 from .image_net21k import ImageNet21k
 from .image_ship_id_extra import ImageShipID_Extra
+from .image_ship_id import ImageShipID
