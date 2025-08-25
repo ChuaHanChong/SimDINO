@@ -11,17 +11,17 @@ import torch
 from torch.utils.data import Sampler
 
 
-from .datasets import ImageNet, ImageNet21k, ImageShipID, ImageShipID_Extra
-
-
-
-
-
-
-
-
-
-
+from .datasets import (
+    ImageNet,
+    ImageNet21k,
+    ImageShipID,
+    ImageShipID_Extra,
+    ImageShipID_100I,
+    ImageShipID_500I,
+    ImageShipID_1000I,
+    ImageShipID_5000I,
+    ImageShipID_10000I
+)
 
 
 
@@ -119,28 +119,28 @@ def _parse_dataset_str(dataset_str: str):
         class_ = ImageShipID_Extra
         if "split" in kwargs:
             kwargs["split"] = ImageShipID_Extra.Split[kwargs["split"]]
+    elif name == "ImageShipID_100I":
+        class_ = ImageShipID_100I
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_100I.Split[kwargs["split"]]
+    elif name == "ImageShipID_500I":
+        class_ = ImageShipID_500I
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_500I.Split[kwargs["split"]]
+    elif name == "ImageShipID_1000I":
+        class_ = ImageShipID_1000I
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_1000I.Split[kwargs["split"]]
+    elif name == "ImageShipID_5000I":
+        class_ = ImageShipID_5000I
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_5000I.Split[kwargs["split"]]
+    elif name == "ImageShipID_10000I":
+        class_ = ImageShipID_10000I
+        if "split" in kwargs:
+            kwargs["split"] = ImageShipID_10000I.Split[kwargs["split"]]
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
