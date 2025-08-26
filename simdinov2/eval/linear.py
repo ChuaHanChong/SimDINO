@@ -803,6 +803,7 @@ def main(args):
         attentive_concat_cls=args.attentive_concat_cls,
         balanced_sampler=args.balanced_sampler,
         balanced_sampler_mode=args.balanced_sampler_mode,
+        logit_adjusted_loss=args.logit_adjusted_loss,
     )
     return 0
 
