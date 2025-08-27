@@ -35,7 +35,7 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key, target_bl
             fsdp_compat_flag = True
     logger.info(f"Trying to load {pretrained_weights} with key {checkpoint_key}")
     if checkpoint_key is not None:
-        if checkpoint_key is str and checkpoint_key in state_dict:
+        if isinstance(checkpoint_key, str) and checkpoint_key in state_dict:
             logger.info(f"Take key {checkpoint_key} in provided checkpoint dict")
             state_dict = state_dict[checkpoint_key]
         else:

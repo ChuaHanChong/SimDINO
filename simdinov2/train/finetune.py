@@ -98,7 +98,7 @@ def create_model(
         dinov2_utils.load_pretrained_weights(model, backbone_weights_path, "teacher")
 
         print(f"Loading classifier weights from {classifier_weights_path}")
-        classifier_weights = torch.load(classifier_weights_path, map_location="cpu")
+        classifier_weights = torch.load(classifier_weights_path, map_location="cpu", weights_only=True)
         model.head.load_state_dict(classifier_weights, strict=True)
 
     return model
@@ -350,7 +350,7 @@ def main(args):
                 args.resume, map_location="cpu", check_hash=True
             )
         else:
-            checkpoint = torch.load(args.resume, map_location="cpu")
+            checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
         model_without_ddp.load_state_dict(checkpoint["model"])
         if (
             not args.eval
