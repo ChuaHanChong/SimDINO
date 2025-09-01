@@ -1,9 +1,8 @@
-import os
-import sys
-
 import argparse
 import datetime
 import json
+import os
+import sys
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -34,7 +33,7 @@ from catalyst.data.sampler import BalanceClassSampler, DistributedSamplerWrapper
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..')))
 import simdinov2.utils.utils as dinov2_utils
 from simdinov2.configs import load_config
-from simdinov2.models import build_model_from_cfg
+from simdinov2.models import vision_transformer as vits
 
 from timm.data import Mixup
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
@@ -68,6 +67,19 @@ class LogitAdjustedLoss(nn.Module):
         return loss.mean()
 
 
+def build_model(args, img_size=224, patch_size=16):
+    vit_kwargs = dict(img_size=img_size, **args)
+    vit_kwargs["patch_size"] = patch_size
+    for i in ["arch", "pretrained_weights", "pretrained_patch_size", "pretrained_img_size", "freeze_backbone_epochs"]:
+        vit_kwargs.pop(i, None)
+    teacher = vits.__dict__[args.arch](**vit_kwargs)
+    return teacher, teacher.embed_dim
+
+
+def build_model_from_cfg(cfg):
+    return build_model(cfg.student, cfg.crops.global_crops_size, cfg.student.patch_size)
+
+
 def create_model(
     config_file,
     model_name,
@@ -88,8 +100,8 @@ def create_model(
         )
 
     config.crops.global_crops_size = img_size
-    config.student.drop_path_rate = drop_path_rate  # DINOv2 didnt implement dropout
-    model, embed_dim = build_model_from_cfg(config, only_teacher=True)
+    config.student.drop_path_rate = drop_path_rate
+    model, embed_dim = build_model_from_cfg(config)
     model.head = nn.Linear(embed_dim, num_classes)
 
     if args.finetune:
