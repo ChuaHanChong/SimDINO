@@ -827,5 +827,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Use logit adjusted loss",
     )
+    args_parser.add_argument(
+        "opts",
+        help="""
+Modify config options at the end of the command. For Yacs configs, use
+space-separated "PATH.KEY VALUE" pairs.
+For python-based LazyConfig, use "path.key=value".
+        """.strip(),
+        default=None,
+        nargs=argparse.REMAINDER,
+    )
+
     args = args_parser.parse_args()
     sys.exit(main(args))
