@@ -80,28 +80,35 @@ def build_model_from_cfg(cfg):
     return build_model(cfg.student, cfg.crops.global_crops_size, cfg.student.patch_size)
 
 
+def get_cfg_from_args(args):
+    default_cfg = OmegaConf.create(load_config("ssl_default_config"))
+    cfg = OmegaConf.load(args.config_file)
+    cfg = OmegaConf.merge(default_cfg, cfg, OmegaConf.from_cli(args.opts))
+    return cfg
+
+
 def create_model(
-    config_file,
+    model_config,
     model_name,
     num_classes,
     img_size=224,
     drop_path_rate=0.0,
     **kwargs,
 ):
-    default_cfg = OmegaConf.create(load_config("ssl_default_config"))
-    config = OmegaConf.load(config_file)
-    config = OmegaConf.merge(default_cfg, config)
-
-    if model_name == "vit_l_16":
-        assert config.student.arch == "vit_large" and config.student.patch_size == 16
+    if model_name == "vit_b_16":
+        assert model_config.student.arch == "vit_base" and model_config.student.patch_size == 16
+    elif model_name == "vit_l_16":
+        assert model_config.student.arch == "vit_large" and model_config.student.patch_size == 16
+    elif model_name == "vit_h_14":
+        assert model_config.student.arch == "vit_huge" and model_config.student.patch_size == 14
     else:
         raise RuntimeError(
-            f"Invalid model {model_name}. Only `vit_l_16` is supported."
+            f"Invalid model {model_name}. Only `vit_b_16` `vit_l_16` & `vit_h_14` is supported."
         )
 
-    config.crops.global_crops_size = img_size
-    config.student.drop_path_rate = drop_path_rate
-    model, embed_dim = build_model_from_cfg(config)
+    model_config.crops.global_crops_size = img_size
+    model_config.student.drop_path_rate = drop_path_rate
+    model, embed_dim = build_model_from_cfg(model_config)
     model.head = nn.Linear(embed_dim, num_classes)
 
     if args.finetune:
@@ -206,9 +213,10 @@ def main(args):
             num_classes=args.nb_classes,
         )
 
+    model_cfg = get_cfg_from_args(args)
     print(f"Creating model: {args.model}")
     model = create_model(
-        args.config_file,
+        model_cfg,
         args.model,
         #pretrained=False,
         num_classes=args.nb_classes,
